@@ -37,7 +37,7 @@ func main() {
 			Name: "osservatorio_carburanti_price",
 			Help: "Fuel prices from Osservatorio Carburanti from MISE",
 		},
-		[]string{"IDImpianto", "Carburante", "SelfService", "Nome", "Tipo", "Comune", "Provincia"},
+		[]string{"IDImpianto", "Carburante", "SelfService", "Nome", "Tipo", "Comune", "Provincia", "Bandiera"},
 	)
 	if err := prometheus.Register(carburantiGauge); err != nil {
 		log.Fatalf("Failed to register 'osservatorio_carburanti_price' gauge: %v", err)
@@ -59,13 +59,14 @@ func main() {
 					goto break_loop
 				}
 				for _, record := range records {
-					var nome, tipo, comune, provincia string
+					var nome, tipo, comune, provincia, bandiera string
 					station, ok := stations[record.IDImpianto]
 					if ok {
 						nome = station.Nome
 						tipo = string(station.Tipo)
 						comune = station.Comune
 						provincia = station.Provincia
+						bandiera = station.Bandiera
 					}
 					carburantiGauge.WithLabelValues(
 						strconv.FormatInt(int64(record.IDImpianto), 10), // IDImpianto
@@ -75,6 +76,7 @@ func main() {
 						tipo,                                   // Tipo
 						comune,                                 // Comune
 						provincia,                              // Provincia
+						bandiera,                               // Bandiera
 					).Set(record.Prezzo)
 				}
 			}
