@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"encoding/csv"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -185,6 +184,7 @@ const (
 )
 
 func updateStations() (map[int]Station, error) {
+	log.Printf("Updating stations from %q", stationsCSVURL)
 	resp, err := http.Get(stationsCSVURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch station data: %w", err)
@@ -193,28 +193,21 @@ func updateStations() (map[int]Station, error) {
 	br := bufio.NewReader(resp.Body)
 	// skip the first two lines. This is a non-compliant CSV with a two-line
 	// header.
-	for i := 0; i < 2; i++ {
-		if _, _, err := br.ReadLine(); err != nil {
-			return nil, fmt.Errorf("failed to read line: %w", err)
-		}
-	}
-	r := csv.NewReader(br)
-	r.Comma = ';'
-	r.FieldsPerRecord = 10
-	r.LazyQuotes = true
 	stationMap := make(map[int]Station)
-	for {
-		items, err := r.Read()
-		if err == io.EOF {
-			break
+	scanner := bufio.NewScanner(br)
+	lineno := 1
+	for scanner.Scan() {
+		// cannot use the csv package because the input CSV is malformed (unterminated quotes)
+		// and the csv package doesn't deal with that.
+		if lineno == 1 {
+			// skip header
+			continue
 		}
-		if err != nil {
-			if errors.Is(err, &csv.ParseError{}) {
-				if strings.Contains(err.Error(), "wrong number of fields") {
-					log.Printf("Skipping malformed record with wrong number of fields")
-					continue
-				}
-			}
+		line := scanner.Text()
+		items := strings.Split(line, ";")
+		if len(items) == 0 {
+			log.Printf("Warning: skipping empty line")
+			continue
 		}
 		idImpianto, err := strconv.ParseInt(items[0], 10, 64)
 		if err != nil {
@@ -222,7 +215,19 @@ func updateStations() (map[int]Station, error) {
 		}
 		_, ok := stationMap[int(idImpianto)]
 		if ok {
-			log.Printf("Found duplicate type '%s' for station ID %d", items[3], idImpianto)
+			log.Printf("Warning: found duplicate type '%s' for station ID %d, using the latest value", items[3], idImpianto)
+		}
+		address := ""
+		switch len(items) {
+		case 10:
+			address = items[5]
+		case 11:
+			// there is a bug in the data source, where the items can be 11 instead of 10.
+			// The extra field is a second version of the address, so we concatenate it to
+			// `Indirizzo`.
+			address = strings.Join(items[5:6], " | ")
+		default:
+			return nil, fmt.Errorf("malformed line with %d fields instead of 10 or 11: %q", len(items), items)
 		}
 		stationMap[int(idImpianto)] = Station{
 			ID:        int(idImpianto),
@@ -230,12 +235,15 @@ func updateStations() (map[int]Station, error) {
 			Bandiera:  items[2],
 			Tipo:      StationType(items[3]),
 			Nome:      items[4],
-			Indirizzo: items[5],
+			Indirizzo: address,
 			Comune:    items[6],
 			Provincia: items[7],
 			Lat:       items[8],
 			Long:      items[9],
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("failed to scan stations CSV: %w", err)
 	}
 	return stationMap, nil
 }
